@@ -1,4 +1,4 @@
-"""Enhanced Streamlit UI — chat history, images, human approval gate."""
+"""Enhanced Streamlit UI — chat history, inline image upload, human approval gate."""
 
 from __future__ import annotations
 
@@ -46,6 +46,17 @@ def init_db() -> None:
       messages TEXT
     )
   """)
+  cursor.execute("""
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT,
+      role TEXT,
+      content TEXT,
+      meta TEXT,
+      timestamp TEXT,
+      FOREIGN KEY (chat_id) REFERENCES chats(id)
+    )
+  """)
   conn.commit()
   conn.close()
 
@@ -70,6 +81,29 @@ st.markdown("""
   }
   .main-header h1 { margin: 0; font-size: 2.5rem; }
   .main-header p { margin: 0.5rem 0 0 0; font-size: 1.1rem; opacity: 0.9; }
+  .stat-card {
+    background: #f0f4f8;
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+    border-left: 4px solid #667eea;
+  }
+  .image-preview {
+    max-height: 300px;
+    border-radius: 8px;
+    margin: 0.5rem 0;
+  }
+  .image-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 0.5rem;
+    background: #e8f4f8;
+    border-radius: 6px;
+    font-size: 1.25rem;
+    color: #0088cc;
+    min-height: 3rem;
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -330,8 +364,7 @@ with st.sidebar:
 
   if chat_history:
     for chat_id, title, _updated_at in chat_history:
-      is_current = chat_id == st.session_state.current_chat_id
-      prefix = ">> " if is_current else ""
+      prefix = ">> " if chat_id == st.session_state.current_chat_id else ""
       if st.button(f"{prefix}{title}", use_container_width=True, key=f"load_{chat_id}"):
         load_chat(chat_id)
   else:
@@ -358,7 +391,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.caption(
-  "Describe your database incident and upload diagnostic images. "
+  "Describe your database incident and attach diagnostic images below the chat box. "
   "Remediation steps require engineer approval when critical incidents are detected."
 )
 
@@ -396,11 +429,11 @@ for msg in st.session_state.messages:
 
       if _show_fallback_banner(meta):
         st.info(
-          "This answer was reasoned from general engineering knowledge — "
-          "no matching runbook was found. Verify critical steps before applying."
+          "Fallback response — no matching runbook found. "
+          "Verify against official documentation before applying."
         )
 
-      with st.expander("Agent trace", expanded=False):
+      with st.expander("Agent Trace", expanded=False):
         for line in meta.get("trace", []):
           st.code(line, language="text")
 
@@ -428,7 +461,7 @@ for msg in st.session_state.messages:
                 st.markdown(f"**{i}.** {step}")
             flagged = meta.get("flagged_steps", [])
             if flagged:
-              st.warning(f"**Flagged steps:** {'; '.join(flagged)}")
+              st.warning(f"Flagged steps: {'; '.join(flagged)}")
             st.rerun()
           except httpx.ConnectError:
             st.error(f"Cannot reach the API at `{API_URL}`.")
@@ -444,6 +477,7 @@ for msg in st.session_state.messages:
           for i, step in enumerate(steps, 1):
             st.markdown(f"**{i}.** {step}")
 
+
 if st.session_state.api_pending:
   pending = st.session_state.api_pending
   image_data = None
@@ -453,34 +487,49 @@ if st.session_state.api_pending:
   complete_api_response(pending, image_data=image_data)
   st.rerun()
 
+
+# Input area — image upload + chat input with indicator
 st.divider()
 st.markdown("### Report Incident")
 
 uploaded_file = st.file_uploader(
-  "Add diagnostic image (PNG/JPG)",
+  "Add diagnostic image",
   type=["jpg", "jpeg", "png"],
   key="image_uploader",
+  help="PNG or JPG, max 1024×1024 after compression",
 )
 
-image_data = st.session_state.uploaded_image
 if uploaded_file:
   try:
     img = Image.open(uploaded_file)
     img.thumbnail((1024, 1024))
     img_bytes = io.BytesIO()
     img.save(img_bytes, format="PNG")
-    image_data = img_bytes.getvalue().hex()
-    st.session_state.uploaded_image = image_data
-    st.image(img, use_container_width=True, caption=f"Attached: {uploaded_file.name}")
+    st.session_state.uploaded_image = img_bytes.getvalue().hex()
+    st.success(f"Image attached: {uploaded_file.name}")
+    st.image(img, use_container_width=True, caption="Preview")
     if st.button("Remove image", key="remove_image"):
       st.session_state.uploaded_image = None
       st.rerun()
   except Exception as e:
     st.error(f"Failed to process image: {e}")
 
-if prompt := st.chat_input(
-  "Describe the database incident (timeouts, auth failures, query errors)..."
-):
+if st.session_state.uploaded_image:
+  col_input, col_icon = st.columns([0.92, 0.08])
+  with col_icon:
+    st.markdown("<div class='image-indicator' title='Image attached'>📸</div>", unsafe_allow_html=True)
+  with col_input:
+    user_input = st.chat_input(
+      "Describe the database incident (timeouts, auth failures, query errors)...",
+      key="chat_input",
+    )
+else:
+  user_input = st.chat_input(
+    "Describe the database incident (timeouts, auth failures, query errors)...",
+    key="chat_input",
+  )
+
+if user_input:
   ensure_chat_session()
-  queue_user_message(prompt, image_data=st.session_state.uploaded_image)
+  queue_user_message(user_input, image_data=st.session_state.uploaded_image)
   st.session_state.uploaded_image = None
