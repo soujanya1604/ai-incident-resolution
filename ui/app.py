@@ -1,16 +1,23 @@
-"""Streamlit UI — incident input, agent trace, human approval gate."""
+"""Enhanced Streamlit UI — chat history, images, human approval gate."""
 
+from __future__ import annotations
+
+import io
+import json
 import os
+import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
-
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-  sys.path.insert(0, str(_ROOT))
 
 import httpx
 import streamlit as st
 from dotenv import load_dotenv
+from PIL import Image
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+  sys.path.insert(0, str(_ROOT))
 
 load_dotenv(_ROOT / ".env")
 try:
@@ -23,11 +30,48 @@ except Exception:
 API_PORT = os.getenv("API_PORT", "8001")
 API_URL = os.getenv("API_URL", f"http://localhost:{API_PORT}").rstrip("/")
 
+DB_PATH = Path.home() / ".ai_incident_resolution" / "history.db"
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+def init_db() -> None:
+  conn = sqlite3.connect(DB_PATH)
+  cursor = conn.cursor()
+  cursor.execute("""
+    CREATE TABLE IF NOT EXISTS chats (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      messages TEXT
+    )
+  """)
+  conn.commit()
+  conn.close()
+
+
+init_db()
+
 st.set_page_config(
   page_title="AI Incident Resolution",
   page_icon="🔧",
   layout="wide",
+  initial_sidebar_state="expanded",
 )
+
+st.markdown("""
+<style>
+  .main-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 2rem;
+    border-radius: 12px;
+    color: white;
+    margin-bottom: 2rem;
+  }
+  .main-header h1 { margin: 0; font-size: 2.5rem; }
+  .main-header p { margin: 0.5rem 0 0 0; font-size: 1.1rem; opacity: 0.9; }
+</style>
+""", unsafe_allow_html=True)
 
 _DEFAULTS = {
   "messages": [],
@@ -35,14 +79,110 @@ _DEFAULTS = {
   "latest_incident": None,
   "steps_revealed": False,
   "approved_payload": None,
+  "current_chat_id": None,
+  "uploaded_image": None,
+  "chat_history_list": [],
 }
+
 for key, value in _DEFAULTS.items():
   if key not in st.session_state:
     st.session_state[key] = value if not isinstance(value, list) else []
 
 
+def get_chat_history_list() -> list[tuple[str, str, str]]:
+  conn = sqlite3.connect(DB_PATH)
+  cursor = conn.cursor()
+  cursor.execute(
+    "SELECT id, title, updated_at FROM chats ORDER BY updated_at DESC LIMIT 20"
+  )
+  chats = cursor.fetchall()
+  conn.close()
+  return chats
+
+
+def ensure_chat_session() -> None:
+  if st.session_state.current_chat_id:
+    return
+  chat_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+  title = f"Incident Analysis {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+  conn = sqlite3.connect(DB_PATH)
+  cursor = conn.cursor()
+  cursor.execute(
+    """
+    INSERT INTO chats (id, title, created_at, updated_at, messages)
+    VALUES (?, ?, ?, ?, ?)
+    """,
+    (chat_id, title, datetime.now().isoformat(), datetime.now().isoformat(), "[]"),
+  )
+  conn.commit()
+  conn.close()
+  st.session_state.current_chat_id = chat_id
+
+
+def create_new_chat() -> None:
+  chat_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+  title = f"Incident Analysis {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+  conn = sqlite3.connect(DB_PATH)
+  cursor = conn.cursor()
+  cursor.execute(
+    """
+    INSERT INTO chats (id, title, created_at, updated_at, messages)
+    VALUES (?, ?, ?, ?, ?)
+    """,
+    (chat_id, title, datetime.now().isoformat(), datetime.now().isoformat(), "[]"),
+  )
+  conn.commit()
+  conn.close()
+  st.session_state.current_chat_id = chat_id
+  st.session_state.messages = []
+  st.session_state.latest_incident = None
+  st.session_state.steps_revealed = False
+  st.session_state.approved_payload = None
+  st.session_state.uploaded_image = None
+  st.rerun()
+
+
+def load_chat(chat_id: str) -> None:
+  conn = sqlite3.connect(DB_PATH)
+  cursor = conn.cursor()
+  cursor.execute("SELECT messages FROM chats WHERE id = ?", (chat_id,))
+  result = cursor.fetchone()
+  conn.close()
+  if result:
+    st.session_state.current_chat_id = chat_id
+    st.session_state.messages = json.loads(result[0]) if result[0] else []
+    st.session_state.latest_incident = None
+    st.session_state.steps_revealed = False
+    st.session_state.approved_payload = None
+    st.rerun()
+
+
+def save_chat() -> None:
+  if st.session_state.current_chat_id:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+      """
+      UPDATE chats SET messages = ?, updated_at = ?
+      WHERE id = ?
+      """,
+      (
+        json.dumps(st.session_state.messages),
+        datetime.now().isoformat(),
+        st.session_state.current_chat_id,
+      ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def clear_cache() -> None:
+  for key, value in _DEFAULTS.items():
+    st.session_state[key] = value if not isinstance(value, list) else []
+  st.rerun()
+
+
 def _build_conversation_history(*, exclude_latest_user: bool = False) -> list[dict[str, str]]:
-  """Prior turns only; the current user message is sent separately as `message`."""
   msgs = st.session_state.messages
   if exclude_latest_user and msgs and msgs[-1].get("role") == "user":
     msgs = msgs[:-1]
@@ -55,15 +195,17 @@ def _build_conversation_history(*, exclude_latest_user: bool = False) -> list[di
   return history
 
 
-def post_incident(message: str, conversation_history: list[dict[str, str]] | None = None) -> dict:
+def post_incident(
+  message: str,
+  conversation_history: list[dict[str, str]] | None = None,
+  image_data: str | None = None,
+) -> dict:
   payload: dict = {"message": message}
   if conversation_history:
     payload["conversation_history"] = conversation_history
-  resp = httpx.post(
-    f"{API_URL}/incident",
-    json=payload,
-    timeout=180.0,
-  )
+  if image_data:
+    payload["image_data"] = image_data
+  resp = httpx.post(f"{API_URL}/incident", json=payload, timeout=180.0)
   resp.raise_for_status()
   return resp.json()
 
@@ -121,36 +263,37 @@ def _show_fallback_banner(meta: dict) -> bool:
   return confidence < 0.80
 
 
-def queue_user_message(user_input: str) -> None:
+def queue_user_message(user_input: str, image_data: str | None = None) -> None:
   user_input = user_input.strip()
   if not user_input:
     return
-  st.session_state.messages.append({"role": "user", "content": user_input})
+  msg_obj: dict = {"role": "user", "content": user_input}
+  if image_data:
+    msg_obj["image_data"] = image_data
+  st.session_state.messages.append(msg_obj)
   st.session_state.api_pending = user_input
   st.session_state.steps_revealed = False
   st.session_state.latest_incident = None
   st.rerun()
 
 
-def complete_api_response(message: str) -> None:
+def complete_api_response(message: str, image_data: str | None = None) -> None:
   history = _build_conversation_history(exclude_latest_user=True)
   try:
     with st.spinner("Analyzing incident..."):
-      data = post_incident(message, conversation_history=history)
+      data = post_incident(message, conversation_history=history, image_data=image_data)
   except httpx.ConnectError:
     st.session_state.messages.pop()
     st.error(
       f"Cannot reach the API at `{API_URL}`. "
-      "On Streamlit Cloud, use main file `streamlit_app.py` so the backend starts automatically. "
-      "Locally, run `streamlit run streamlit_app.py` or start the API with "
+      "Use `streamlit run streamlit_app.py` or start the API with "
       f"`uvicorn api.main:app --port {API_PORT}`."
     )
     return
   except httpx.TimeoutException:
     st.session_state.messages.pop()
     st.error(
-      "The API request timed out. The backend may still be loading the knowledge base "
-      "on first run — wait a moment and try again."
+      "The API request timed out. The backend may still be loading — wait and try again."
     )
     return
   except Exception as exc:
@@ -161,22 +304,66 @@ def complete_api_response(message: str) -> None:
   st.session_state.latest_incident = data
   summary = _answer_text(data) or "Analysis complete."
   st.session_state.messages.append(
-    {
-      "role": "assistant",
-      "content": summary,
-      "meta": data,
-    }
+    {"role": "assistant", "content": summary, "meta": data}
   )
+  save_chat()
 
 
-st.title("AI Incident Resolution")
+# Sidebar
+with st.sidebar:
+  st.markdown("### Chat Management")
+
+  col1, col2, col3 = st.columns(3)
+  with col1:
+    if st.button("New Chat", use_container_width=True):
+      create_new_chat()
+  with col2:
+    if st.button("Clear Cache", use_container_width=True):
+      clear_cache()
+  with col3:
+    if st.button("Re-run", use_container_width=True):
+      st.rerun()
+
+  st.divider()
+  st.markdown("### Chat History")
+  chat_history = get_chat_history_list()
+
+  if chat_history:
+    for chat_id, title, _updated_at in chat_history:
+      is_current = chat_id == st.session_state.current_chat_id
+      prefix = ">> " if is_current else ""
+      if st.button(f"{prefix}{title}", use_container_width=True, key=f"load_{chat_id}"):
+        load_chat(chat_id)
+  else:
+    st.info("No chat history yet. Start a new chat to begin.")
+
+  st.divider()
+  if st.session_state.messages:
+    col1, col2 = st.columns(2)
+    with col1:
+      user_msgs = sum(1 for m in st.session_state.messages if m.get("role") == "user")
+      st.metric("Messages", len(st.session_state.messages), f"{user_msgs} user")
+    with col2:
+      if st.session_state.latest_incident:
+        confidence = float(st.session_state.latest_incident.get("confidence", 0.0))
+        st.metric("Confidence", f"{confidence:.0%}")
+
+
+# Main content
+st.markdown("""
+<div class="main-header">
+  <h1>AI Incident Resolution</h1>
+  <p>Multi-agent diagnosis for database connection failures</p>
+</div>
+""", unsafe_allow_html=True)
+
 st.caption(
-  "Multi-agent diagnosis for database connection failures — "
-  "remediation steps require engineer approval when an active incident is detected."
+  "Describe your database incident and upload diagnostic images. "
+  "Remediation steps require engineer approval when critical incidents are detected."
 )
 
 for msg in st.session_state.messages:
-  with st.chat_message(msg["role"]):
+  with st.chat_message(msg["role"], avatar="👤" if msg["role"] == "user" else "🤖"):
     meta = msg.get("meta")
     content = msg["content"]
     if meta and msg["role"] == "assistant":
@@ -184,72 +371,116 @@ for msg in st.session_state.messages:
 
     st.markdown(content)
 
+    if msg.get("image_data") and msg["role"] == "user":
+      try:
+        image_bytes = io.BytesIO(bytes.fromhex(msg["image_data"]))
+        img = Image.open(image_bytes)
+        st.image(img, use_container_width=True, caption="Attached image")
+      except Exception:
+        st.text("[Image attachment]")
+
     if meta and msg["role"] == "assistant" and not _is_clarifying_turn(meta):
       requires_approval = bool(meta.get("requires_approval", False))
       confidence = float(meta.get("confidence", 0.0))
 
       if _show_metadata(meta):
-        st.caption(
-          f"Service: {meta.get('service')} | "
-          f"Error type: {meta.get('error_type')} | "
-          f"Severity: {meta.get('severity')} | "
-          f"Confidence: {confidence:.2f}"
-        )
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+          st.caption(f"**Service:** {meta.get('service')}")
+        with col2:
+          st.caption(f"**Error type:** {meta.get('error_type')}")
+        with col3:
+          st.caption(f"**Severity:** {meta.get('severity')}")
+        with col4:
+          st.caption(f"**Confidence:** {confidence:.0%}")
 
       if _show_fallback_banner(meta):
         st.info(
-          "ℹ️ This answer was reasoned from general engineering knowledge — "
-          "no matching runbook was found in the knowledge base. The diagnosis "
-          "is based on known behavior of the specific tools mentioned. "
-          "Verify critical steps against official documentation before applying."
+          "This answer was reasoned from general engineering knowledge — "
+          "no matching runbook was found. Verify critical steps before applying."
         )
 
       with st.expander("Agent trace", expanded=False):
         for line in meta.get("trace", []):
-          st.text(line)
+          st.code(line, language="text")
 
       if meta.get("blocked"):
-        st.error("Incident blocked by Security Agent. No remediation steps available.")
+        st.error("Incident blocked by Security Agent. No remediation available.")
       elif requires_approval and not st.session_state.steps_revealed:
-        st.info("Remediation steps are locked until you approve the analysis.")
+        st.warning("Remediation steps are locked until you approve the analysis.")
         incident_id = meta.get("incident_id")
-        if incident_id and st.button("Approve & Show Fix Steps", key=f"approve_{incident_id}"):
+        if incident_id and st.button(
+          "Approve & Unlock Fix Steps",
+          key=f"approve_{incident_id}",
+          use_container_width=True,
+          type="primary",
+        ):
           try:
-            approved = post_approve(incident_id)
+            with st.spinner("Processing approval..."):
+              approved = post_approve(incident_id)
             st.session_state.steps_revealed = True
             st.session_state.approved_payload = approved
-            st.success("Approved — remediation steps revealed below.")
+            st.success("Approved — remediation steps revealed.")
             steps = approved.get("recommended_steps", [])
             if steps:
-              st.markdown("**Remediation steps (advisory only):**")
+              st.markdown("### Remediation Steps (Advisory Only)")
               for i, step in enumerate(steps, 1):
-                st.markdown(f"{i}. {step}")
+                st.markdown(f"**{i}.** {step}")
             flagged = meta.get("flagged_steps", [])
             if flagged:
-              st.warning("Flagged steps: " + "; ".join(flagged))
+              st.warning(f"**Flagged steps:** {'; '.join(flagged)}")
+            st.rerun()
           except httpx.ConnectError:
-            st.error(
-              f"Cannot reach the API at `{API_URL}` while approving. "
-              "Ensure the backend is running (see connection hint above)."
-            )
+            st.error(f"Cannot reach the API at `{API_URL}`.")
           except Exception as exc:
             st.error(f"Approval failed: {exc}")
       elif requires_approval and st.session_state.steps_revealed:
-        steps = meta.get("recommended_steps", [])
-        latest = st.session_state.latest_incident or meta
-        if latest.get("human_approved") or st.session_state.steps_revealed:
-          approve_data = st.session_state.get("approved_payload")
-          steps = (approve_data or {}).get("recommended_steps") or steps
+        approve_data = st.session_state.get("approved_payload")
+        steps = (approve_data or {}).get("recommended_steps") or meta.get(
+          "recommended_steps", []
+        )
         if steps:
-          st.markdown("**Remediation steps (advisory only):**")
+          st.markdown("### Remediation Steps (Advisory Only)")
           for i, step in enumerate(steps, 1):
-            st.markdown(f"{i}. {step}")
+            st.markdown(f"**{i}.** {step}")
 
 if st.session_state.api_pending:
   pending = st.session_state.api_pending
+  image_data = None
+  if st.session_state.messages:
+    image_data = st.session_state.messages[-1].get("image_data")
   st.session_state.api_pending = None
-  complete_api_response(pending)
+  complete_api_response(pending, image_data=image_data)
   st.rerun()
 
-if prompt := st.chat_input("Describe the database incident..."):
-  queue_user_message(prompt)
+st.divider()
+st.markdown("### Report Incident")
+
+uploaded_file = st.file_uploader(
+  "Add diagnostic image (PNG/JPG)",
+  type=["jpg", "jpeg", "png"],
+  key="image_uploader",
+)
+
+image_data = st.session_state.uploaded_image
+if uploaded_file:
+  try:
+    img = Image.open(uploaded_file)
+    img.thumbnail((1024, 1024))
+    img_bytes = io.BytesIO()
+    img.save(img_bytes, format="PNG")
+    image_data = img_bytes.getvalue().hex()
+    st.session_state.uploaded_image = image_data
+    st.image(img, use_container_width=True, caption=f"Attached: {uploaded_file.name}")
+    if st.button("Remove image", key="remove_image"):
+      st.session_state.uploaded_image = None
+      st.rerun()
+  except Exception as e:
+    st.error(f"Failed to process image: {e}")
+
+if prompt := st.chat_input(
+  "Describe the database incident (timeouts, auth failures, query errors)..."
+):
+  ensure_chat_session()
+  queue_user_message(prompt, image_data=st.session_state.uploaded_image)
+  st.session_state.uploaded_image = None

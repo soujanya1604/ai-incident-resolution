@@ -8,3 +8,5 @@ __pycache__/
 chroma_db/
 deploy/aws/*.pem
 .pytest_cache/
+.ai_incident_resolution/
+*.db

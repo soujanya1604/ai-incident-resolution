@@ -40,6 +40,10 @@ class ConversationTurn(BaseModel):
 class IncidentRequest(BaseModel):
   message: str = Field(..., min_length=1, max_length=8000)
   conversation_history: list[ConversationTurn] = Field(default_factory=list)
+  image_data: str | None = Field(
+    default=None,
+    description="Hex-encoded PNG image bytes from the UI",
+  )
 
 
 class ApproveRequest(BaseModel):
@@ -83,8 +87,17 @@ def health():
 @app.post("/incident", response_model=IncidentResponse)
 def incident(req: IncidentRequest):
   try:
+    message = req.message
+    if req.image_data:
+      try:
+        image_bytes = bytes.fromhex(req.image_data)
+      except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid image_data encoding") from exc
+      if len(image_bytes) > 5_000_000:
+        raise HTTPException(status_code=400, detail="Image too large (max 5MB)")
+      message = f"{message}\n\n[Diagnostic image attached ({len(image_bytes)} bytes)]"
     history = [turn.model_dump() for turn in req.conversation_history]
-    payload = create_incident(req.message, conversation_history=history)
+    payload = create_incident(message, conversation_history=history)
   except ValueError as exc:
     raise HTTPException(status_code=400, detail=str(exc)) from exc
   except Exception as exc:
