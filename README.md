@@ -70,7 +70,16 @@ Markdown runbooks in `knowledge_base/docs/` are chunked and indexed into `chroma
 | Component | Platform |
 |-----------|----------|
 | API | [Railway](https://railway.app) — connect repo, set `OPENAI_API_KEY`, uses `railway.toml` |
-| UI | [Streamlit Cloud](https://streamlit.io/cloud) — entrypoint `ui/app.py`, secret `API_URL` → Railway URL |
+| UI | [Streamlit Community Cloud](https://share.streamlit.io) — see below |
+
+### Streamlit Community Cloud
+
+1. Push this repo to GitHub (`main` branch).
+2. [Deploy an app](https://share.streamlit.io/deploy) → pick `soujanya1604/ai-incident-resolution`.
+3. **Main file path:** `ui/app.py`
+4. **Python version:** 3.11 (`.python-version`)
+5. **Dependencies file:** `requirements-ui.txt` (UI-only; API runs on Railway)
+6. **Secrets** (Settings → Secrets): `API_URL` = your Railway API URL (e.g. `https://your-app.up.railway.app`)
 
 **Note:** Incidents are stored in memory and are lost on API restart.
 
