@@ -1,12 +1,24 @@
 """Streamlit UI — incident input, agent trace, human approval gate."""
 
 import os
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+  sys.path.insert(0, str(_ROOT))
 
 import httpx
 import streamlit as st
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(_ROOT / ".env")
+try:
+  for _key, _value in st.secrets.items():
+    if not isinstance(_value, dict):
+      os.environ.setdefault(str(_key).upper(), str(_value))
+except Exception:
+  pass
 
 API_PORT = os.getenv("API_PORT", "8001")
 API_URL = os.getenv("API_URL", f"http://localhost:{API_PORT}").rstrip("/")
@@ -128,8 +140,17 @@ def complete_api_response(message: str) -> None:
   except httpx.ConnectError:
     st.session_state.messages.pop()
     st.error(
-      f"Cannot reach API at `{API_URL}`. "
-      f"Start the API: `uvicorn api.main:app --reload --port {API_PORT}`"
+      f"Cannot reach the API at `{API_URL}`. "
+      "On Streamlit Cloud, use main file `streamlit_app.py` so the backend starts automatically. "
+      "Locally, run `streamlit run streamlit_app.py` or start the API with "
+      f"`uvicorn api.main:app --port {API_PORT}`."
+    )
+    return
+  except httpx.TimeoutException:
+    st.session_state.messages.pop()
+    st.error(
+      "The API request timed out. The backend may still be loading the knowledge base "
+      "on first run — wait a moment and try again."
     )
     return
   except Exception as exc:
@@ -206,6 +227,11 @@ for msg in st.session_state.messages:
             flagged = meta.get("flagged_steps", [])
             if flagged:
               st.warning("Flagged steps: " + "; ".join(flagged))
+          except httpx.ConnectError:
+            st.error(
+              f"Cannot reach the API at `{API_URL}` while approving. "
+              "Ensure the backend is running (see connection hint above)."
+            )
           except Exception as exc:
             st.error(f"Approval failed: {exc}")
       elif requires_approval and st.session_state.steps_revealed:

@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: AI Incident Resolution — single EC2 instance (API + Streamlit + nginx)
+
+Parameters:
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair for SSH access
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+    Description: t3.small (2GB) minimum; t3.medium recommended
+  OpenAIApiKey:
+    Type: String
+    NoEcho: true
+    Description: OpenAI API key (stored in instance user-data; rotate after deploy if needed)
+  RepoUrl:
+    Type: String
+    Default: https://github.com/soujanya1604/ai-incident-resolution.git
+  RepoBranch:
+    Type: String
+    Default: main
+  SSHAllowedCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed for SSH (restrict to your IP, e.g. 1.2.3.4/32)
+
+Resources:
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: AI Incident Resolution — HTTPS and SSH only
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHAllowedCidr
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub "{{resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}"
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          export REPO_URL="${RepoUrl}"
+          export REPO_BRANCH="${RepoBranch}"
+          export OPENAI_API_KEY="${OpenAIApiKey}"
+          apt-get update -y
+          apt-get install -y git
+          git clone --branch "${RepoBranch}" --depth 1 "${RepoUrl}" /tmp/ai-incident-resolution
+          bash /tmp/ai-incident-resolution/deploy/aws/scripts/bootstrap.sh > /var/log/ai-incident-bootstrap.log 2>&1
+      Tags:
+        - Key: Name
+          Value: ai-incident-resolution
+
+Outputs:
+  PublicIp:
+    Description: Public IP — open http://PUBLIC_IP (nginx on port 80)
+    Value: !GetAtt Ec2Instance.PublicIp
+  AppUrl:
+    Description: Application URL (HTTP)
+    Value: !Sub "http://${Ec2Instance.PublicIp}"
+  SSHCommand:
+    Description: SSH into the instance
+    Value: !Sub "ssh -i YOUR_KEY.pem ubuntu@${Ec2Instance.PublicIp}"
+  BootstrapLog:
+    Description: Check install progress on the instance
+    Value: "sudo tail -f /var/log/ai-incident-bootstrap.log"

@@ -1,0 +1,16 @@
+[Unit]
+Description=AI Incident Resolution API (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/ai-incident-resolution
+EnvironmentFile=/opt/ai-incident-resolution/.env
+ExecStart=/opt/ai-incident-resolution/.venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8001
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
