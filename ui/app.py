@@ -93,16 +93,40 @@ st.markdown("""
     border-radius: 8px;
     margin: 0.5rem 0;
   }
-  .image-indicator {
-    display: flex;
+  .chat-composer {
+    border: 1px solid rgba(128, 128, 128, 0.35);
+    border-radius: 1.25rem;
+    padding: 0.35rem 0.5rem 0.5rem;
+    background: rgba(128, 128, 128, 0.08);
+  }
+  .chat-composer div[data-testid="stFormSubmitButton"] button,
+  .chat-composer div[data-testid="stPopover"] > button {
+    min-height: 2.75rem;
+    border-radius: 0.75rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+  }
+  .chat-composer div[data-testid="stFileUploader"] {
+    padding: 0;
+  }
+  .chat-composer div[data-testid="stFileUploader"] section {
+    padding: 0;
+    min-height: 0;
+  }
+  .chat-composer div[data-testid="stFileUploader"] button {
+    min-height: 2.75rem;
+    border-radius: 0.75rem;
+    font-size: 1.15rem;
+  }
+  .attachment-chip {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    padding: 0.75rem 0.5rem;
+    gap: 0.5rem;
+    padding: 0.35rem 0.75rem;
     background: #e8f4f8;
-    border-radius: 6px;
-    font-size: 1.25rem;
-    color: #0088cc;
-    min-height: 3rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
   }
 </style>
 """, unsafe_allow_html=True)
@@ -115,6 +139,7 @@ _DEFAULTS = {
   "approved_payload": None,
   "current_chat_id": None,
   "uploaded_image": None,
+  "uploaded_image_name": None,
   "chat_history_list": [],
 }
 
@@ -173,6 +198,7 @@ def create_new_chat() -> None:
   st.session_state.steps_revealed = False
   st.session_state.approved_payload = None
   st.session_state.uploaded_image = None
+  st.session_state.uploaded_image_name = None
   st.rerun()
 
 
@@ -214,6 +240,21 @@ def clear_cache() -> None:
   for key, value in _DEFAULTS.items():
     st.session_state[key] = value if not isinstance(value, list) else []
   st.rerun()
+
+
+def _process_image_upload(uploaded_file) -> bool:
+  """Compress image and store hex in session state."""
+  try:
+    img = Image.open(uploaded_file)
+    img.thumbnail((1024, 1024))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    st.session_state.uploaded_image = buf.getvalue().hex()
+    st.session_state.uploaded_image_name = uploaded_file.name
+    return True
+  except Exception as exc:
+    st.error(f"Failed to process image: {exc}")
+    return False
 
 
 def _build_conversation_history(*, exclude_latest_user: bool = False) -> list[dict[str, str]]:
@@ -391,7 +432,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.caption(
-  "Describe your database incident and attach diagnostic images below the chat box. "
+  "Describe your database incident in the chat box — use the image icon to attach diagnostics. "
   "Remediation steps require engineer approval when critical incidents are detected."
 )
 
@@ -488,48 +529,63 @@ if st.session_state.api_pending:
   st.rerun()
 
 
-# Input area — image upload + chat input with indicator
+# Bottom chat composer — text + image icon + send
 st.divider()
-st.markdown("### Report Incident")
-
-uploaded_file = st.file_uploader(
-  "Add diagnostic image",
-  type=["jpg", "jpeg", "png"],
-  key="image_uploader",
-  help="PNG or JPG, max 1024×1024 after compression",
-)
-
-if uploaded_file:
-  try:
-    img = Image.open(uploaded_file)
-    img.thumbnail((1024, 1024))
-    img_bytes = io.BytesIO()
-    img.save(img_bytes, format="PNG")
-    st.session_state.uploaded_image = img_bytes.getvalue().hex()
-    st.success(f"Image attached: {uploaded_file.name}")
-    st.image(img, use_container_width=True, caption="Preview")
-    if st.button("Remove image", key="remove_image"):
-      st.session_state.uploaded_image = None
-      st.rerun()
-  except Exception as e:
-    st.error(f"Failed to process image: {e}")
 
 if st.session_state.uploaded_image:
-  col_input, col_icon = st.columns([0.92, 0.08])
-  with col_icon:
-    st.markdown("<div class='image-indicator' title='Image attached'>📸</div>", unsafe_allow_html=True)
-  with col_input:
-    user_input = st.chat_input(
-      "Describe the database incident (timeouts, auth failures, query errors)...",
-      key="chat_input",
+  chip_col, remove_col = st.columns([5, 1])
+  with chip_col:
+    name = st.session_state.uploaded_image_name or "image.png"
+    st.markdown(
+      f"<div class='attachment-chip'>📷 {name}</div>",
+      unsafe_allow_html=True,
     )
-else:
-  user_input = st.chat_input(
-    "Describe the database incident (timeouts, auth failures, query errors)...",
-    key="chat_input",
-  )
+  with remove_col:
+    if st.button("✕", key="remove_image", help="Remove attached image"):
+      st.session_state.uploaded_image = None
+      st.session_state.uploaded_image_name = None
+      st.rerun()
 
-if user_input:
-  ensure_chat_session()
-  queue_user_message(user_input, image_data=st.session_state.uploaded_image)
-  st.session_state.uploaded_image = None
+st.markdown('<div class="chat-composer">', unsafe_allow_html=True)
+
+with st.form("chat_composer", clear_on_submit=True, border=False):
+  col_text, col_img, col_send = st.columns([14, 1, 1], vertical_alignment="bottom")
+
+  with col_text:
+    user_input = st.text_input(
+      "message",
+      placeholder="Describe the database incident (timeouts, auth failures, query errors)...",
+      label_visibility="collapsed",
+      key="chat_text_input",
+    )
+
+  with col_img:
+    with st.popover("🖼️", help="Attach diagnostic image (PNG/JPG)"):
+      popover_upload = st.file_uploader(
+        "Choose image",
+        type=["jpg", "jpeg", "png"],
+        key="image_uploader",
+        label_visibility="collapsed",
+      )
+      if popover_upload is not None:
+        _process_image_upload(popover_upload)
+
+  with col_send:
+    submitted = st.form_submit_button(
+      "↑",
+      use_container_width=True,
+      type="primary",
+      help="Send message",
+    )
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+if submitted:
+  text = (user_input or "").strip()
+  if not text and not st.session_state.uploaded_image:
+    st.warning("Enter a message or attach an image.")
+  elif text:
+    ensure_chat_session()
+    queue_user_message(text, image_data=st.session_state.uploaded_image)
+    st.session_state.uploaded_image = None
+    st.session_state.uploaded_image_name = None
