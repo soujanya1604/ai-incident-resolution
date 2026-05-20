@@ -423,16 +423,13 @@ def complete_api_response(message: str, image_data: str | None = None) -> None:
 with st.sidebar:
   st.markdown("### Chat Management")
 
-  col1, col2, col3 = st.columns(3)
+  col1, col2 = st.columns(2)
   with col1:
     if st.button("New Chat", use_container_width=True):
       create_new_chat()
   with col2:
     if st.button("Clear Cache", use_container_width=True):
       clear_cache()
-  with col3:
-    if st.button("Re-run", use_container_width=True):
-      st.rerun()
 
   st.divider()
   st.markdown("### Chat History")
