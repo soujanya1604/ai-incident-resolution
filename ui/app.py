@@ -93,40 +93,75 @@ st.markdown("""
     border-radius: 8px;
     margin: 0.5rem 0;
   }
-  .chat-composer {
-    border: 1px solid rgba(128, 128, 128, 0.35);
-    border-radius: 1.25rem;
-    padding: 0.35rem 0.5rem 0.5rem;
-    background: rgba(128, 128, 128, 0.08);
+  /* Bottom chat composer — single pill, no extra bars */
+  div[data-testid="stVerticalBlockBorderWrapper"]:has(form[data-testid="stForm"]) {
+    border: 1px solid rgba(102, 126, 234, 0.35) !important;
+    border-radius: 1.5rem !important;
+    padding: 0.4rem 0.65rem 0.5rem !important;
+    background: rgba(102, 126, 234, 0.06) !important;
+    box-shadow: 0 2px 12px rgba(102, 126, 234, 0.12);
   }
-  .chat-composer div[data-testid="stFormSubmitButton"] button,
-  .chat-composer div[data-testid="stPopover"] > button {
-    min-height: 2.75rem;
-    border-radius: 0.75rem;
-    font-size: 1.1rem;
-    font-weight: 700;
+  form[data-testid="stForm"] {
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
-  .chat-composer div[data-testid="stFileUploader"] {
-    padding: 0;
+  form[data-testid="stForm"] [data-testid="InputInstructions"] {
+    display: none !important;
   }
-  .chat-composer div[data-testid="stFileUploader"] section {
-    padding: 0;
-    min-height: 0;
+  form[data-testid="stForm"] [data-testid="stTextInput"] input {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    font-size: 1rem !important;
+    padding: 0.65rem 0.5rem !important;
   }
-  .chat-composer div[data-testid="stFileUploader"] button {
-    min-height: 2.75rem;
-    border-radius: 0.75rem;
-    font-size: 1.15rem;
+  form[data-testid="stForm"] [data-testid="stTextInput"] > div > div {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  form[data-testid="stForm"] [data-testid="stTextInput"] label {
+    display: none !important;
+  }
+  form[data-testid="stForm"] [data-testid="stPopover"] > button {
+    min-height: 2.5rem !important;
+    min-width: 2.5rem !important;
+    height: 2.5rem !important;
+    border-radius: 50% !important;
+    border: 1px solid rgba(102, 126, 234, 0.35) !important;
+    background: rgba(255, 255, 255, 0.9) !important;
+    font-size: 1.1rem !important;
+    padding: 0 0.5rem !important;
+  }
+  form[data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
+    min-height: 2.5rem !important;
+    min-width: 2.5rem !important;
+    height: 2.5rem !important;
+    border-radius: 50% !important;
+    border: none !important;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    color: white !important;
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    padding: 0 !important;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.35);
+  }
+  form[data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
+    filter: brightness(1.05);
+    box-shadow: 0 3px 10px rgba(102, 126, 234, 0.45);
   }
   .attachment-chip {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.35rem 0.75rem;
-    background: #e8f4f8;
+    gap: 0.4rem;
+    padding: 0.3rem 0.65rem;
+    background: rgba(102, 126, 234, 0.12);
+    border: 1px solid rgba(102, 126, 234, 0.25);
     border-radius: 999px;
-    font-size: 0.85rem;
-    margin-bottom: 0.5rem;
+    font-size: 0.8rem;
+    color: #4a5568;
+    margin-bottom: 0.35rem;
   }
 </style>
 """, unsafe_allow_html=True)
@@ -529,56 +564,53 @@ if st.session_state.api_pending:
   st.rerun()
 
 
-# Bottom chat composer — text + image icon + send
-st.divider()
-
-if st.session_state.uploaded_image:
-  chip_col, remove_col = st.columns([5, 1])
-  with chip_col:
-    name = st.session_state.uploaded_image_name or "image.png"
-    st.markdown(
-      f"<div class='attachment-chip'>📷 {name}</div>",
-      unsafe_allow_html=True,
-    )
-  with remove_col:
-    if st.button("✕", key="remove_image", help="Remove attached image"):
-      st.session_state.uploaded_image = None
-      st.session_state.uploaded_image_name = None
-      st.rerun()
-
-st.markdown('<div class="chat-composer">', unsafe_allow_html=True)
-
-with st.form("chat_composer", clear_on_submit=True, border=False):
-  col_text, col_img, col_send = st.columns([14, 1, 1], vertical_alignment="bottom")
-
-  with col_text:
-    user_input = st.text_input(
-      "message",
-      placeholder="Describe the database incident (timeouts, auth failures, query errors)...",
-      label_visibility="collapsed",
-      key="chat_text_input",
-    )
-
-  with col_img:
-    with st.popover("🖼️", help="Attach diagnostic image (PNG/JPG)"):
-      popover_upload = st.file_uploader(
-        "Choose image",
-        type=["jpg", "jpeg", "png"],
-        key="image_uploader",
-        label_visibility="collapsed",
+# Bottom chat composer — single unified pill
+with st.container(border=True):
+  if st.session_state.uploaded_image:
+    chip_col, remove_col = st.columns([8, 1])
+    with chip_col:
+      name = st.session_state.uploaded_image_name or "image.png"
+      st.markdown(
+        f"<div class='attachment-chip'>📷 {name}</div>",
+        unsafe_allow_html=True,
       )
-      if popover_upload is not None:
-        _process_image_upload(popover_upload)
+    with remove_col:
+      if st.button("✕", key="remove_image", help="Remove image"):
+        st.session_state.uploaded_image = None
+        st.session_state.uploaded_image_name = None
+        st.rerun()
 
-  with col_send:
-    submitted = st.form_submit_button(
-      "↑",
-      use_container_width=True,
-      type="primary",
-      help="Send message",
+  with st.form("chat_composer", clear_on_submit=True, border=False):
+    col_text, col_img, col_send = st.columns(
+      [12, 1, 1], gap="small", vertical_alignment="center"
     )
 
-st.markdown("</div>", unsafe_allow_html=True)
+    with col_text:
+      user_input = st.text_input(
+        "message",
+        placeholder="Describe the incident (timeouts, auth failures, query errors)...",
+        label_visibility="collapsed",
+        key="chat_text_input",
+      )
+
+    with col_img:
+      with st.popover("🖼️", help="Attach image (PNG/JPG)"):
+        popover_upload = st.file_uploader(
+          "Choose image",
+          type=["jpg", "jpeg", "png"],
+          key="image_uploader",
+          label_visibility="collapsed",
+        )
+        if popover_upload is not None:
+          _process_image_upload(popover_upload)
+
+    with col_send:
+      submitted = st.form_submit_button(
+        "↑",
+        use_container_width=True,
+        type="primary",
+        help="Send",
+      )
 
 if submitted:
   text = (user_input or "").strip()
