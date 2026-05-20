@@ -27,6 +27,10 @@ Parameters:
     Type: String
     Default: 0.0.0.0/0
     Description: CIDR allowed for SSH (restrict to your IP, e.g. 1.2.3.4/32)
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-00403f401ee6a4b98
+    Description: Ubuntu 22.04 LTS AMI (us-east-1; update for other regions)
 
 Resources:
   InstanceRole:
@@ -69,7 +73,7 @@ Resources:
   Ec2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: !Sub "{{resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}"
+      ImageId: !Ref AmiId
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyPairName
       IamInstanceProfile: !Ref InstanceProfile
