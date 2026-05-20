@@ -1,5 +1,7 @@
 [client]
 showErrorDetails = true
+# Show Rerun, Auto rerun, Clear cache when not on localhost (e.g. AWS EC2)
+toolbarMode = "developer"
 
 [server]
 headless = true
