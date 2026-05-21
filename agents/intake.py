@@ -9,19 +9,7 @@ from agents.llm import get_llm
 from agents.security import mask_secrets, validate_input
 from agents.state import AgentState, append_trace
 
-INTAKE_UNIFIED_SYSTEM = """
-Rules:
-- is_db_related: true for:
-  - active database failures and errors
-  - database connectivity issues and configuration
-  - how to connect to a database or data tool
-  - questions about database drivers, connection strings, 
-    BI tool connections (Tableau, Power BI, Looker)
-  - questions about database limits, settings, error codes
-- is_db_related: false ONLY for topics completely unrelated 
-  to databases or data infrastructure 
-  (airports, weather, geography, sports, recipes, etc.)
-"""
+INTAKE_UNIFIED_SYSTEM = """You classify and extract fields from user messages for a database incident resolution system.
 
 Return JSON only:
 {
@@ -33,8 +21,16 @@ Return JSON only:
 }
 
 Rules:
-- is_db_related: true only for database, data platform, or infrastructure connectivity issues
-- is_db_related: false for general knowledge unrelated to DB/infra (airports, weather, geography, etc.)
+- is_db_related: true for:
+  - active database failures and errors
+  - database connectivity issues and configuration
+  - how to connect to a database or data tool
+  - questions about database drivers, connection strings,
+    BI tool connections (Tableau, Power BI, Looker)
+  - questions about database limits, settings, error codes
+- is_db_related: false ONLY for topics completely unrelated
+  to databases or data infrastructure
+  (airports, weather, geography, sports, recipes, etc.)
 - is_informational: true for factual questions (what does X mean, what is the limit, how does Y work)
 - is_informational: false for active failures needing diagnosis (errors, timeouts, cannot connect)
 - When is_db_related is false, set service/error_type to unknown and severity to low
