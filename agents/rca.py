@@ -4,6 +4,7 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agents.feedback_store import get_confidence_adjustment
 from agents.llm import get_llm
 from agents.state import AgentState, append_trace
 
@@ -185,6 +186,24 @@ def _clarifying_response(state: AgentState, *, reason: str) -> dict:
   }
 
 
+def _apply_feedback_adjustment(
+  state: AgentState,
+  confidence: float,
+  trail: list[str],
+) -> tuple[float, list[str]]:
+  error_type = state.get("error_type", "unknown")
+  adjustment = get_confidence_adjustment(error_type)
+  if adjustment == 0.0:
+    return confidence, trail
+  adjusted = min(0.98, max(0.10, confidence + adjustment))
+  trail = append_trace(
+    {**state, "trace": trail},
+    "RCA",
+    f"confidence adjusted {adjustment:+.2f} from historical approval rate for {error_type}",
+  )
+  return adjusted, trail
+
+
 def _needs_clarification(state: AgentState, confidence: float) -> bool:
   if state.get("is_informational"):
     return False
@@ -338,14 +357,15 @@ Retrieved documentation:
       else:
         confidence = 0.48
 
-  if _needs_clarification(state, confidence):
-    return _clarifying_response(state, reason="low confidence — conversational follow-up")
-
   trail = append_trace(
     state,
     "RCA",
     f"analysis complete (confidence={confidence:.2f}, kb_max={max_score:.2f}, informational={is_informational})",
   )
+  confidence, trail = _apply_feedback_adjustment(state, confidence, trail)
+
+  if _needs_clarification(state, confidence):
+    return _clarifying_response(state, reason="low confidence — conversational follow-up")
 
   result: dict = {
     "root_cause": root_cause,

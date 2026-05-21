@@ -330,6 +330,26 @@ def post_approve(incident_id: str) -> dict:
   return resp.json()
 
 
+def post_reject(incident_id: str) -> dict:
+  resp = httpx.post(
+    f"{API_URL}/reject",
+    json={"incident_id": incident_id},
+    timeout=30.0,
+  )
+  resp.raise_for_status()
+  return resp.json()
+
+
+@st.cache_data(ttl=30)
+def fetch_learning_stats() -> dict | None:
+  try:
+    resp = httpx.get(f"{API_URL}/stats", timeout=10.0)
+    resp.raise_for_status()
+    return resp.json()
+  except Exception:
+    return None
+
+
 def _answer_text(meta: dict) -> str:
   if _is_clarifying_turn(meta):
     return meta.get("root_cause") or meta.get("sanitized_response", "")
@@ -454,6 +474,31 @@ with st.sidebar:
         confidence = float(st.session_state.latest_incident.get("confidence", 0.0))
         st.metric("Confidence", f"{confidence:.0%}")
 
+  st.divider()
+  st.subheader("System Learning")
+  stats = fetch_learning_stats()
+  if stats:
+    st.metric("Knowledge Base Documents", stats.get("kb_total_documents", 0))
+    st.metric("Resolved Incidents in KB", stats.get("resolved_incidents_added", 0))
+    total_approvals = stats.get("total_approvals", 0)
+    total_rejections = stats.get("total_rejections", 0)
+    if total_approvals or total_rejections:
+      st.caption(f"Approvals: {total_approvals} · Rejections: {total_rejections}")
+    feedback = stats.get("feedback_by_error_type") or {}
+    if feedback:
+      st.markdown("**Approval Rates by Error Type**")
+      for error_type, record in feedback.items():
+        total = record.get("approvals", 0) + record.get("rejections", 0)
+        if total > 0:
+          rate = record["approvals"] / total
+          st.progress(rate, text=f"{error_type}: {rate:.0%} ({total} incidents)")
+    else:
+      st.caption(
+        "No feedback recorded yet. Approve or reject diagnoses to start learning."
+      )
+  else:
+    st.caption("Learning stats unavailable — ensure the API is running.")
+
 
 # Main content
 st.markdown("""
@@ -515,33 +560,60 @@ for msg in st.session_state.messages:
       elif requires_approval and not st.session_state.steps_revealed:
         st.warning("Remediation steps are locked until you approve the analysis.")
         incident_id = meta.get("incident_id")
-        if incident_id and st.button(
-          "Approve & Unlock Fix Steps",
-          key=f"approve_{incident_id}",
-          use_container_width=True,
-          type="primary",
-        ):
-          try:
-            with st.spinner("Processing approval..."):
-              approved = post_approve(incident_id)
-            st.session_state.steps_revealed = True
-            st.session_state.approved_payload = approved
-            st.success("Approved — remediation steps revealed.")
-            steps = approved.get("recommended_steps", [])
-            if steps:
-              st.markdown("### Remediation Steps (Advisory Only)")
-              for i, step in enumerate(steps, 1):
-                st.markdown(f"**{i}.** {step}")
-            flagged = meta.get("flagged_steps", [])
-            if flagged:
-              st.warning(f"Flagged steps: {'; '.join(flagged)}")
-            st.rerun()
-          except httpx.ConnectError:
-            st.error(f"Cannot reach the API at `{API_URL}`.")
-          except Exception as exc:
-            st.error(f"Approval failed: {exc}")
+        if incident_id:
+          col1, col2 = st.columns(2)
+          with col1:
+            if st.button(
+              "Approve & Unlock Fix Steps",
+              key=f"approve_{incident_id}",
+              use_container_width=True,
+              type="primary",
+            ):
+              try:
+                with st.spinner("Processing approval..."):
+                  approved = post_approve(incident_id)
+                st.session_state.steps_revealed = True
+                st.session_state.approved_payload = approved
+                fetch_learning_stats.clear()
+                if approved.get("kb_updated"):
+                  st.success(
+                    "This resolved incident has been added to the knowledge base. "
+                    "Future similar incidents will benefit from this diagnosis."
+                  )
+                else:
+                  st.success("Approved — remediation steps revealed.")
+                st.rerun()
+              except httpx.ConnectError:
+                st.error(f"Cannot reach the API at `{API_URL}`.")
+              except Exception as exc:
+                st.error(f"Approval failed: {exc}")
+          with col2:
+            if st.button(
+              "Reject Diagnosis",
+              key=f"reject_{incident_id}",
+              use_container_width=True,
+            ):
+              try:
+                post_reject(incident_id)
+                st.session_state.steps_revealed = False
+                st.session_state.approved_payload = None
+                fetch_learning_stats.clear()
+                st.warning(
+                  "Diagnosis rejected. The system will learn from this. "
+                  "Please describe the issue in more detail and try again."
+                )
+                st.rerun()
+              except httpx.ConnectError:
+                st.error(f"Cannot reach the API at `{API_URL}`.")
+              except Exception as exc:
+                st.error(f"Rejection failed: {exc}")
       elif requires_approval and st.session_state.steps_revealed:
         approve_data = st.session_state.get("approved_payload")
+        if approve_data and approve_data.get("kb_updated"):
+          st.success(
+            "This resolved incident has been added to the knowledge base. "
+            "Future similar incidents will benefit from this diagnosis."
+          )
         steps = (approve_data or {}).get("recommended_steps") or meta.get(
           "recommended_steps", []
         )

@@ -1,13 +1,19 @@
 """FastAPI backend — POST /incident, POST /approve, GET /health."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from graph.incidents import approve_incident, create_incident
-from knowledge_base.loader import warmup_kb
+from agents.feedback_store import get_feedback_summary, record_approval, record_rejection
+from graph.incidents import approve_incident, create_incident, get_incident
+from knowledge_base.incident_writer import write_resolved_incident
+from knowledge_base.loader import get_collection, warmup_kb
+
+RESOLVED_INCIDENTS_DIR = Path(__file__).resolve().parent.parent / "knowledge_base" / "docs" / "resolved"
+KB_WRITE_MIN_CONFIDENCE = 0.60
 
 
 @asynccontextmanager
@@ -77,11 +83,46 @@ class ApproveResponse(BaseModel):
   final_response: str
   recommended_steps: list[str]
   human_approved: bool
+  kb_updated: bool = False
+  new_doc_id: str | None = None
+
+
+class RejectResponse(BaseModel):
+  status: str
+  incident_id: str
+
+
+class StatsResponse(BaseModel):
+  kb_total_documents: int
+  resolved_incidents_added: int
+  total_approvals: int
+  total_rejections: int
+  feedback_by_error_type: dict
 
 
 @app.get("/health")
 def health():
   return {"status": "ok"}
+
+
+@app.get("/stats", response_model=StatsResponse)
+def stats():
+  collection = get_collection()
+  resolved_count = (
+    len(list(RESOLVED_INCIDENTS_DIR.glob("*.md")))
+    if RESOLVED_INCIDENTS_DIR.exists()
+    else 0
+  )
+  feedback = get_feedback_summary()
+  total_approvals = sum(v.get("approvals", 0) for v in feedback.values())
+  total_rejections = sum(v.get("rejections", 0) for v in feedback.values())
+  return StatsResponse(
+    kb_total_documents=collection.count(),
+    resolved_incidents_added=resolved_count,
+    total_approvals=total_approvals,
+    total_rejections=total_rejections,
+    feedback_by_error_type=feedback,
+  )
 
 
 @app.post("/incident", response_model=IncidentResponse)
@@ -108,9 +149,46 @@ def incident(req: IncidentRequest):
 @app.post("/approve", response_model=ApproveResponse)
 def approve(req: ApproveRequest):
   try:
+    stored = get_incident(req.incident_id)
+    if stored is None:
+      raise KeyError(f"Unknown incident: {req.incident_id}")
+
     payload = approve_incident(req.incident_id)
+    record_approval(
+      error_type=stored.get("error_type", "unknown"),
+      confidence=float(stored.get("confidence", 0.0)),
+    )
+
+    kb_updated = False
+    new_doc_id = None
+    confidence = float(stored.get("confidence", 0.0))
+    if confidence >= KB_WRITE_MIN_CONFIDENCE:
+      new_doc_id = write_resolved_incident(
+        service=stored.get("service", "unknown"),
+        error_type=stored.get("error_type", "unknown"),
+        severity=stored.get("severity", "medium"),
+        original_message=stored.get("original_message", ""),
+        root_cause=stored.get("root_cause", ""),
+        recommended_steps=stored.get("recommended_steps", []),
+        confidence=confidence,
+      )
+      kb_updated = True
+
+    return ApproveResponse(
+      **payload,
+      kb_updated=kb_updated,
+      new_doc_id=new_doc_id,
+    )
   except KeyError as exc:
     raise HTTPException(status_code=404, detail=str(exc)) from exc
   except ValueError as exc:
     raise HTTPException(status_code=400, detail=str(exc)) from exc
-  return ApproveResponse(**payload)
+
+
+@app.post("/reject", response_model=RejectResponse)
+def reject(req: ApproveRequest):
+  stored = get_incident(req.incident_id)
+  if stored is None:
+    raise HTTPException(status_code=404, detail="Incident not found")
+  record_rejection(error_type=stored.get("error_type", "unknown"))
+  return RejectResponse(status="rejected", incident_id=req.incident_id)

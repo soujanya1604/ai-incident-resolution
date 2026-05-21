@@ -6,6 +6,7 @@ __pycache__/
 .DS_Store
 .streamlit/secrets.toml
 chroma_db/
+knowledge_base/feedback_store.json
 deploy/aws/*.pem
 .pytest_cache/
 .ai_incident_resolution/
