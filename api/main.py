@@ -56,6 +56,11 @@ class ApproveRequest(BaseModel):
   incident_id: str = Field(..., min_length=1)
 
 
+class RejectRequest(BaseModel):
+  incident_id: str = Field(..., min_length=1)
+  feedback: str = Field(default="", max_length=4000)
+
+
 class IncidentResponse(BaseModel):
   incident_id: str
   service: str
@@ -90,6 +95,7 @@ class ApproveResponse(BaseModel):
 class RejectResponse(BaseModel):
   status: str
   incident_id: str
+  feedback_recorded: bool = False
 
 
 class StatsResponse(BaseModel):
@@ -186,9 +192,16 @@ def approve(req: ApproveRequest):
 
 
 @app.post("/reject", response_model=RejectResponse)
-def reject(req: ApproveRequest):
+def reject(req: RejectRequest):
   stored = get_incident(req.incident_id)
   if stored is None:
     raise HTTPException(status_code=404, detail="Incident not found")
-  record_rejection(error_type=stored.get("error_type", "unknown"))
-  return RejectResponse(status="rejected", incident_id=req.incident_id)
+  feedback_recorded = record_rejection(
+    error_type=stored.get("error_type", "unknown"),
+    feedback=req.feedback,
+  )
+  return RejectResponse(
+    status="rejected",
+    incident_id=req.incident_id,
+    feedback_recorded=feedback_recorded,
+  )

@@ -17,23 +17,35 @@ def _save(data: dict) -> None:
   FEEDBACK_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def _empty_record() -> dict:
+  return {"approvals": 0, "rejections": 0, "total_confidence": 0.0, "recent_feedback": []}
+
+
 def record_approval(error_type: str, confidence: float) -> None:
   """Record that an engineer approved a diagnosis for this error_type."""
   data = _load()
   if error_type not in data:
-    data[error_type] = {"approvals": 0, "rejections": 0, "total_confidence": 0.0}
+    data[error_type] = _empty_record()
   data[error_type]["approvals"] += 1
   data[error_type]["total_confidence"] += confidence
   _save(data)
 
 
-def record_rejection(error_type: str) -> None:
+def record_rejection(error_type: str, feedback: str | None = None) -> bool:
   """Record that an engineer rejected a diagnosis for this error_type."""
   data = _load()
   if error_type not in data:
-    data[error_type] = {"approvals": 0, "rejections": 0, "total_confidence": 0.0}
+    data[error_type] = _empty_record()
   data[error_type]["rejections"] += 1
+  recorded = False
+  text = (feedback or "").strip()
+  if text:
+    recent = data[error_type].setdefault("recent_feedback", [])
+    recent.append(text[:500])
+    data[error_type]["recent_feedback"] = recent[-5:]
+    recorded = True
   _save(data)
+  return recorded
 
 
 def get_confidence_adjustment(error_type: str) -> float:

@@ -166,12 +166,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+_MIN_REJECTION_FEEDBACK_LEN = 10
+
 _DEFAULTS = {
   "messages": [],
   "api_pending": None,
   "latest_incident": None,
   "steps_revealed": False,
   "approved_payload": None,
+  "rejection_incident_id": None,
   "current_chat_id": None,
   "uploaded_image": None,
   "uploaded_image_name": None,
@@ -232,6 +235,7 @@ def create_new_chat() -> None:
   st.session_state.latest_incident = None
   st.session_state.steps_revealed = False
   st.session_state.approved_payload = None
+  st.session_state.rejection_incident_id = None
   st.session_state.uploaded_image = None
   st.session_state.uploaded_image_name = None
   st.rerun()
@@ -249,6 +253,7 @@ def load_chat(chat_id: str) -> None:
     st.session_state.latest_incident = None
     st.session_state.steps_revealed = False
     st.session_state.approved_payload = None
+    st.session_state.rejection_incident_id = None
     st.rerun()
 
 
@@ -330,14 +335,31 @@ def post_approve(incident_id: str) -> dict:
   return resp.json()
 
 
-def post_reject(incident_id: str) -> dict:
+def post_reject(incident_id: str, feedback: str) -> dict:
   resp = httpx.post(
     f"{API_URL}/reject",
-    json={"incident_id": incident_id},
+    json={"incident_id": incident_id, "feedback": feedback},
     timeout=30.0,
   )
   resp.raise_for_status()
   return resp.json()
+
+
+def submit_rejection_feedback(incident_id: str, feedback: str) -> None:
+  """Record rejection, then re-run diagnosis with engineer feedback."""
+  feedback = feedback.strip()
+  try:
+    with st.spinner("Recording feedback..."):
+      post_reject(incident_id, feedback)
+    st.session_state.rejection_incident_id = None
+    st.session_state.steps_revealed = False
+    st.session_state.approved_payload = None
+    fetch_learning_stats.clear()
+    queue_user_message(f"Diagnosis rejected — engineer feedback: {feedback}")
+  except httpx.ConnectError:
+    st.error(f"Cannot reach the API at `{API_URL}`.")
+  except Exception as exc:
+    st.error(f"Rejection failed: {exc}")
 
 
 @st.cache_data(ttl=30)
@@ -404,6 +426,7 @@ def queue_user_message(user_input: str, image_data: str | None = None) -> None:
   st.session_state.api_pending = user_input
   st.session_state.steps_revealed = False
   st.session_state.latest_incident = None
+  st.session_state.rejection_incident_id = None
   st.rerun()
 
 
@@ -561,52 +584,77 @@ for msg in st.session_state.messages:
         st.warning("Remediation steps are locked until you approve the analysis.")
         incident_id = meta.get("incident_id")
         if incident_id:
-          col1, col2 = st.columns(2)
-          with col1:
-            if st.button(
-              "Approve & Unlock Fix Steps",
-              key=f"approve_{incident_id}",
-              use_container_width=True,
-              type="primary",
-            ):
-              try:
-                with st.spinner("Processing approval..."):
-                  approved = post_approve(incident_id)
-                st.session_state.steps_revealed = True
-                st.session_state.approved_payload = approved
-                fetch_learning_stats.clear()
-                if approved.get("kb_updated"):
-                  st.success(
-                    "This resolved incident has been added to the knowledge base. "
-                    "Future similar incidents will benefit from this diagnosis."
-                  )
-                else:
-                  st.success("Approved — remediation steps revealed.")
-                st.rerun()
-              except httpx.ConnectError:
-                st.error(f"Cannot reach the API at `{API_URL}`.")
-              except Exception as exc:
-                st.error(f"Approval failed: {exc}")
-          with col2:
-            if st.button(
-              "Reject Diagnosis",
-              key=f"reject_{incident_id}",
-              use_container_width=True,
-            ):
-              try:
-                post_reject(incident_id)
-                st.session_state.steps_revealed = False
-                st.session_state.approved_payload = None
-                fetch_learning_stats.clear()
-                st.warning(
-                  "Diagnosis rejected. The system will learn from this. "
-                  "Please describe the issue in more detail and try again."
+          if st.session_state.rejection_incident_id == incident_id:
+            st.markdown("**What was wrong with this diagnosis?**")
+            with st.form(f"rejection_feedback_{incident_id}", clear_on_submit=False):
+              feedback = st.text_area(
+                "rejection_feedback",
+                placeholder=(
+                  "Describe what was incorrect (e.g. wrong error type, missed root cause, "
+                  "or what the correct issue actually is)..."
+                ),
+                label_visibility="collapsed",
+                height=120,
+              )
+              btn_col1, btn_col2 = st.columns(2)
+              with btn_col1:
+                submitted = st.form_submit_button(
+                  "Submit feedback & re-analyze",
+                  use_container_width=True,
+                  type="primary",
                 )
+              with btn_col2:
+                cancelled = st.form_submit_button(
+                  "Cancel",
+                  use_container_width=True,
+                )
+            if cancelled:
+              st.session_state.rejection_incident_id = None
+              st.rerun()
+            if submitted:
+              text = (feedback or "").strip()
+              if len(text) < _MIN_REJECTION_FEEDBACK_LEN:
+                st.error(
+                  f"Please enter at least {_MIN_REJECTION_FEEDBACK_LEN} characters "
+                  "describing what was wrong."
+                )
+              else:
+                submit_rejection_feedback(incident_id, text)
+          else:
+            col1, col2 = st.columns(2)
+            with col1:
+              if st.button(
+                "Approve & Unlock Fix Steps",
+                key=f"approve_{incident_id}",
+                use_container_width=True,
+                type="primary",
+              ):
+                try:
+                  with st.spinner("Processing approval..."):
+                    approved = post_approve(incident_id)
+                  st.session_state.steps_revealed = True
+                  st.session_state.approved_payload = approved
+                  fetch_learning_stats.clear()
+                  if approved.get("kb_updated"):
+                    st.success(
+                      "This resolved incident has been added to the knowledge base. "
+                      "Future similar incidents will benefit from this diagnosis."
+                    )
+                  else:
+                    st.success("Approved — remediation steps revealed.")
+                  st.rerun()
+                except httpx.ConnectError:
+                  st.error(f"Cannot reach the API at `{API_URL}`.")
+                except Exception as exc:
+                  st.error(f"Approval failed: {exc}")
+            with col2:
+              if st.button(
+                "Reject Diagnosis",
+                key=f"reject_{incident_id}",
+                use_container_width=True,
+              ):
+                st.session_state.rejection_incident_id = incident_id
                 st.rerun()
-              except httpx.ConnectError:
-                st.error(f"Cannot reach the API at `{API_URL}`.")
-              except Exception as exc:
-                st.error(f"Rejection failed: {exc}")
       elif requires_approval and st.session_state.steps_revealed:
         approve_data = st.session_state.get("approved_payload")
         if approve_data and approve_data.get("kb_updated"):
@@ -655,9 +703,14 @@ with st.container(border=True):
     )
 
     with col_text:
+      chat_placeholder = (
+        "Or add more detail here after rejecting above..."
+        if st.session_state.rejection_incident_id
+        else "Describe the incident (timeouts, auth failures, query errors)..."
+      )
       user_input = st.text_input(
         "message",
-        placeholder="Describe the incident (timeouts, auth failures, query errors)...",
+        placeholder=chat_placeholder,
         label_visibility="collapsed",
         key="chat_text_input",
       )
