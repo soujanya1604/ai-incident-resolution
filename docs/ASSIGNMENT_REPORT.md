@@ -1,6 +1,8 @@
 # Junior FDE Pre-screening Assignment  
 ## Design and Implementation of a Multi-Agent System
 
+> **Official 1–2 page submission:** [SUBMISSION_REPORT.md](SUBMISSION_REPORT.md) — use that document for email/PDF delivery. This file is an extended technical reference.
+
 **Project:** AI Incident Resolution — Database Connection Failure Diagnosis  
 **Author:** Soujanya Gullapalli  
 **Date:** May 2026  
@@ -139,7 +141,7 @@ Intake additionally constrains **scope** to database/infrastructure connectivity
 - Agents **cannot execute** SQL, shell, or infrastructure changes—output is **advisory text only**.
 - Destructive recommendations are **flagged**, not auto-executed.
 - **Human approval** is required to reveal steps, preventing autonomous escalation in the UI flow.
-- Incidents are **not** auto-written back into the knowledge base (no feedback loop that could poison RAG).
+- Approved incidents (confidence ≥ 60%) are written to ChromaDB via `knowledge_base/incident_writer.py`; reject/approve signals adjust confidence through `agents/feedback_store.py` (see [SUBMISSION_REPORT.md](SUBMISSION_REPORT.md) Learning section).
 
 ### 2.5 Autonomy vs control
 
@@ -269,7 +271,8 @@ curl -X POST http://localhost:8001/incident \
 |-------------|----------|
 | Public GitHub repository | https://github.com/soujanya1604/ai-incident-resolution |
 | Live internet-accessible system | http://44.192.117.195 |
-| Written report (this document) | `docs/ASSIGNMENT_REPORT.md` |
+| Written report (1–2 pages) | `docs/SUBMISSION_REPORT.md` |
+| Extended technical report | `docs/ASSIGNMENT_REPORT.md` |
 | Architecture diagrams | `README.md` (Mermaid) + Section 1 above |
 | In-person presentation | Live demo using deployed URL |
 
@@ -279,7 +282,7 @@ curl -X POST http://localhost:8001/incident \
 
 The AI Incident Resolution system demonstrates a **defensible multi-agent design** for a real operational use case: database connection incidents. It combines **LangGraph orchestration**, **RAG over curated runbooks**, **LLM reasoning** where appropriate, and **practical security controls** including injection blocking, secret masking, and human approval before remediation output.
 
-Future improvements could include persistent incident storage, vision support for uploaded diagnostics, retry policies, and automated ingestion of resolved incidents into the knowledge base—without changing the core multi-agent + RAG architecture described here.
+Implemented learning capabilities include KB writeback on approval, confidence adjustment from approve/reject history, engineer feedback on rejection with re-analysis, and UI/API learning stats (`GET /stats`). Future improvements could include persistent incident storage across API restarts, stronger retry policies, and richer vision analysis for uploaded diagnostics.
 
 ---
 

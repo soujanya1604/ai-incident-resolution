@@ -82,6 +82,14 @@ _INCIDENT_ERROR_TYPES = frozenset(
     "timeout",
     "reserved_slots",
     "connection_refused",
+    "authentication_failure",    # wrong password, pg_hba.conf rejection
+    "ssl_error",                 # SSL handshake failures
+    "disk_full",                 # 53100 SQLSTATE
+    "out_of_memory",             # 53200 SQLSTATE
+    "deadlock",                  # transactions blocking each other
+    "replication_lag",           # replica falling behind primary
+    "idle_in_transaction",       # sessions stuck in transaction
+    "connection_leak", 
   }
 )
 

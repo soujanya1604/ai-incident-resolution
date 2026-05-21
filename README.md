@@ -80,7 +80,8 @@ flowchart LR
 **Communication pattern:** shared `AgentState` passed through LangGraph nodes (orchestration layer).  
 **Deployment:** AWS EC2 — live demo at **http://44.192.117.195**
 
-Full assignment write-up: **[docs/ASSIGNMENT_REPORT.md](docs/ASSIGNMENT_REPORT.md)**
+**Assignment submission (1–2 pages):** [docs/SUBMISSION_REPORT.md](docs/SUBMISSION_REPORT.md)  
+Extended technical write-up: [docs/ASSIGNMENT_REPORT.md](docs/ASSIGNMENT_REPORT.md)
 
 ## Sample prompts
 

@@ -9,7 +9,19 @@ from agents.llm import get_llm
 from agents.security import mask_secrets, validate_input
 from agents.state import AgentState, append_trace
 
-INTAKE_UNIFIED_SYSTEM = """You classify and extract fields from user messages for a database incident resolution system.
+INTAKE_UNIFIED_SYSTEM = """
+Rules:
+- is_db_related: true for:
+  - active database failures and errors
+  - database connectivity issues and configuration
+  - how to connect to a database or data tool
+  - questions about database drivers, connection strings, 
+    BI tool connections (Tableau, Power BI, Looker)
+  - questions about database limits, settings, error codes
+- is_db_related: false ONLY for topics completely unrelated 
+  to databases or data infrastructure 
+  (airports, weather, geography, sports, recipes, etc.)
+"""
 
 Return JSON only:
 {
@@ -72,6 +84,11 @@ _DB_HINTS = (
   "too many client",
   "timeout",
   "connection refused",
+  "connect",
+  "how to connect",
+  "driver",
+  "jdbc",
+  "odbc"
 )
 
 
@@ -134,6 +151,23 @@ def _is_vague_message(message: str, extracted: dict) -> bool:
     "problem",
     "db issue",
     "database issue",
+    "connectivity issue",
+    "connection issue",
+    "connection error",
+    "connection timeout",
+    "connection refused",
+    "connection lost",
+    "connection reset",
+    "connection closed",
+    "connection interrupted",
+    "connection failed",
+    "connection blocked",
+    "database down",
+    "database error",
+    "database timeout",
+    "database refused",
+    "database lost",
+    "database reset",
   )
   if lower in vague_only or lower.rstrip("?.!") in vague_only:
     return True
